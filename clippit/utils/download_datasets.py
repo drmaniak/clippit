@@ -68,6 +68,7 @@ def process_and_save_clip_embeddings(
             return_tensors="pt",
             size={"shortest_edge": shortest_edge},
             padding=True,
+            truncation=True,
         ).to(device)
 
         # Pass this input into CLIP to get outputs
@@ -88,6 +89,7 @@ def process_and_save_clip_embeddings(
             # Append the row to the data_list for the corresponding split
             data_dict[split].append(data_row)
 
+    print("Saving data to parquet files")
     # Once done with making lists, create dataframes, save as parquet
     save_dataframe_parquet(
         data_dict=data_dict, topk=topk, split="train", output_dir=output_dir
