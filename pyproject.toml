@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clippit"
+version = "0.1.0"
+description = "Image Captioning on the Flickr30k dataset using CLIP image encoding & GPT-2 decoding"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy",
+  "pandas",
+  "matplotlib",
+  "torch",
+  "lightning",
+  "transformers",
+  "datasets",
+  "wandb",
+  "h5py",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pyright"]
+train = ["tensorboard"]
+
+[project.urls]
+Repository = "https://github.com/drmaniak/clippit.git"
+
+[tool.hatch.build.targets.wheel]
+packages = ["clippit"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
