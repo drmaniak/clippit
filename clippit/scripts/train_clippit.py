@@ -299,7 +299,7 @@ def main():
 
     # Initialize wandb
     wandb.init(
-        project=f"{config['wandb']['project_name']} - {config['wandb']['run_name']} - {config['data']['grid_rows']}x{config['data']['grid_cols']}",
+        project=f"{config['wandb']['project_name']}",
         config=config,
     )
 
