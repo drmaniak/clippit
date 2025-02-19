@@ -424,17 +424,16 @@ def main():
             with torch.no_grad():
                 sample_batch = next(iter(val_loader))
                 sample_input = sample_batch["decoder_input"][:1].to(device)
-                sample_output = model.inference(
+                sample_caption, sample_tokens = model.inference(
                     decoder_input=sample_input,
                     image=None,
                     clip_model=clip_model,
                     clip_processor=clip_processor,
                 )
-                sample_text = clip_processor.tokenizer.decode(sample_output)  # type: ignore
                 wandb.log(
                     {
                         "sample_generations": wandb.Table(
-                            data=[[sample_text]], columns=["Generated Text"]
+                            data=[[sample_caption]], columns=["Generated Caption"]
                         )
                     }
                 )

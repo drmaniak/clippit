@@ -60,7 +60,7 @@ class Flicker30K(Dataset):
         target_output = cap_emb_decoder_target  # size (76, 512)
 
         return {
-            "decoder_input": decoder_input.to(self.device, dtype=torch.float32),
-            "target_output": target_output.to(self.device, dtype=torch.float32),
-            "attention_mask": attention_mask.to(self.device, dtype=torch.float32),
+            "decoder_input": decoder_input.to("cpu", dtype=torch.float32),
+            "target_output": target_output.to("cpu", dtype=torch.float32),
+            "attention_mask": attention_mask.to("cpu", dtype=torch.float32),
         }
