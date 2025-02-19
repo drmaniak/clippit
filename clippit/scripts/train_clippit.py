@@ -224,15 +224,13 @@ def validate(
         # Reshape for loss calculation
         batch_size, seq_length, num_classes = outputs.shape
         outputs = outputs.view(-1, num_classes).to(torch.float32)
-        labels = target_output.to(torch.long).squeeze(-1)
+        labels = target_output.view(-1).to(torch.long)
 
         loss = criterion(outputs, labels.view(-1))
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             print(f"\n=== NaN/Inf detected in loss at batch {batch_idx} ===")
             raise ValueError("NaN/Inf in loss")
-
-        loss = criterion(outputs, labels)
 
         if batch_idx % 100 == 0:
             pred_tokens = outputs.argmax(dim=-1)[:10]  # First 10 predictions
@@ -249,8 +247,10 @@ def validate(
 
         # Calculate accuracy
         predictions = outputs.argmax(dim=-1)
-        correct_predictions += (predictions == labels).sum().item()
-        total_predictions += labels.numel()
+        mask = labels != criterion.ignore_index  # Handle padding tokens
+        correct_predictions += ((predictions == labels) & mask).sum().item()
+        total_predictions += mask.sum().item()
+
         total_loss += loss.item()
 
         # Update progress bar
