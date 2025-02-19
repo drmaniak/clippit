@@ -86,7 +86,7 @@ def create_dataloaders(
     val_loader = DataLoader(
         val_dataset,
         batch_size=config["training"]["batch_size"],
-        shuffle=False,
+        shuffle=True,
         num_workers=config["data"]["num_workers"],
         pin_memory=True,
     )
@@ -419,11 +419,23 @@ def main():
         )
 
         # Log sample predictions periodically
-        if epoch % 5 == 0:
+        if epoch % 2 == 0:
             model.eval()
             with torch.no_grad():
                 sample_batch = next(iter(val_loader))
                 sample_input = sample_batch["decoder_input"][:1].to(device)
+                sample_mask = sample_batch["attention_mask"][:1].to(device)
+
+                # Forward pass with teacher forcing for validation
+                model_forward_output = model(sample_input, sample_mask)
+
+                model_forward_output = model_forward_output.to("cpu")
+                forward_caption = clip_processor.tokenizer.batch_decode(  # type: ignore
+                    model_forward_output.argmax(dim=-1).tolist(),
+                    skip_special_tokens=True,
+                )
+
+                print(f"Forward Generated Caption: {forward_caption}")
                 sample_caption, sample_tokens = model.inference(
                     decoder_input=sample_input,
                     image=None,
@@ -433,7 +445,8 @@ def main():
                 wandb.log(
                     {
                         "sample_generations": wandb.Table(
-                            data=[[sample_caption]], columns=["Generated Caption"]
+                            data=[[sample_caption, forward_caption]],
+                            columns=["Generated Caption", "Forward Caption"],
                         )
                     }
                 )

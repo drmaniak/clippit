@@ -203,6 +203,9 @@ class Decoder(nn.Module):
         clip_model: CLIPModel,
         clip_processor: CLIPProcessor,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        temperature: float = 0.7,
+        top_k: int = 50,
+        max_length: int | None = None,
     ):
         """Inference through the trained model
 
@@ -215,7 +218,6 @@ class Decoder(nn.Module):
 
         self.eval()
 
-        max_length = self.seq_length
         generated_tokens = []
 
         with torch.no_grad():
@@ -228,32 +230,61 @@ class Decoder(nn.Module):
                 img_input: BatchEncoding = clip_processor(
                     images=image,
                     return_tensors="pt",
-                    size={"shortest_edge": 125},
+                    size={"shortest_edge": 150},
                     padding=True,
                 )
 
                 img_embeddings = clip_model.get_image_features(**img_input)  # type: ignore of shape (1,512)
                 current_sequence = img_embeddings.unsqueeze(0).to(device)
 
+            if max_length is None:
+                max_length = self.seq_length // 2
+
             for step in range(max_length):
                 logits = self.forward(
                     current_sequence
                 )  # (1, curr_seq_length, num_classes)
 
-                # Get predictions for the last position
-                next_token_logits = logits[:, -1, :]
-                next_token = torch.argmax(next_token_logits, dim=-1)
+                # Get logits for the last position and apply temperature
+                next_token_logits = logits[:, -1, :] / temperature
 
+                # Apply top-k filtering
+                if top_k > 0:
+                    top_k_logits, top_k_indices = torch.topk(next_token_logits, top_k)
+                    next_token_logits = torch.full_like(
+                        next_token_logits, float("-inf")
+                    )
+                    next_token_logits.scatter_(1, top_k_indices, top_k_logits)
+
+                # Convert logits to probabilities
+                probs = torch.softmax(next_token_logits, dim=-1)
+
+                # Sample from the probability distribution
+                next_token = torch.multinomial(probs, num_samples=1)
                 token_id = next_token.item()
 
                 generated_tokens.append(token_id)
 
-                decoded_tokens = clip_processor.tokenizer.decode(generated_tokens)  # type: ignore
-
-                print(f"Step {step + 1}: {decoded_tokens}")
-
-                if token_id in clip_processor.tokenizer.all_special_ids:  # type: ignore
+                # Early stopping conditions
+                if token_id == clip_processor.tokenizer.eos_token_id:  # type: ignore
                     break
+
+                if len(generated_tokens) >= max_length:
+                    break
+
+                # Convert predicted token to embedding
+                token_tensor = torch.tensor([[token_id]]).to(device)
+                token_embedding = clip_model.text_model(
+                    token_tensor, output_hidden_states=True, return_dict=True
+                ).last_hidden_state
+
+                # Update sequence for next iteration
+                current_sequence = torch.cat((current_sequence, token_embedding), dim=1)
+
+                # Optional: print intermediate results
+                if step % 5 == 0:  # Print every 5 steps
+                    decoded_tokens = clip_processor.tokenizer.decode(generated_tokens)  # type: ignore
+                    print(f"Step {step + 1}: {decoded_tokens}")
 
                 # Convert predicted token to embedding
                 token_tensor = torch.tensor([[token_id]]).to(device)
