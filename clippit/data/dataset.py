@@ -33,11 +33,14 @@ class Flicker30K(Dataset):
             text=[cap],
             return_tensors="pt",
             padding="max_length",
+            truncation=True,
             max_length=77,
         )
         cap_tokens = cap_processed["input_ids"].squeeze()  # size (77) # type: ignore
         cap_output = self.model.text_model(
-            **cap_processed, output_hidden_states=True, return_dict=True
+            **cap_processed,
+            output_hidden_states=True,
+            return_dict=True,
         )
         attention_mask = cap_processed.attention_mask.squeeze(0)[:-1]  # (76,)
         cap_emb = cap_output.last_hidden_state.squeeze()  # size (77, 512)
