@@ -322,7 +322,6 @@ def main():
     )
     print(f"Train dataset size: {len(train_loader.dataset)}")  # type: ignore
     print(f"Validation dataset size: {len(val_loader.dataset)}")  # type: ignore
-    print(f"Null-Percentage: {config['data']['null_percentage']}")  # type: ignore
 
     # Add assertions to verify data sample shapes
     assert decoder_input.dim() == 2, f"Expected 2D tensor for data_sample, got {decoder_input.dim()}D"  # fmt: skip
