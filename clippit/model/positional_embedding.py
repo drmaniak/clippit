@@ -22,6 +22,15 @@ class PositionalEmbedding(nn.Module):
             torch.Tensor: Output tensor of shape (batch_size, seq_length, d_model)
         """
 
-        out = x + self.pos_embedding
+        batch_size, seq_length, d_model = x.shape
+
+        if seq_length > self.seq_length:
+            raise ValueError(
+                f"Input Sequence length ({seq_length}) exceeds maximum length ({self.seq_length})"
+            )
+
+        pos_emb_trunc = self.pos_embedding[:seq_length, :]
+
+        out = x + pos_emb_trunc
 
         return out

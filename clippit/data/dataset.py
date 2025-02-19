@@ -30,19 +30,20 @@ class Flicker30K(Dataset):
 
         img_emb = torch.tensor(img_emb)
         cap_processed = self.processor(
-            text=[cap], return_tensors="pt", padding="max_length", truncate=True
+            text=[cap], return_tensors="pt", padding="max_length"
         )
+        cap_tokens = cap_processed["input_ids"].squeeze()  # size (77) # type: ignore
         cap_output = self.model.text_model(
             **cap_processed, output_hidden_states=True, return_dict=True
         )
-        attention_mask = cap_processed.attention_mask.squeeze(0)
+        attention_mask = cap_processed.attention_mask.squeeze(0)[:-1]  # (76,)
         cap_emb = cap_output.last_hidden_state.squeeze()  # size (77, 512)
         cap_emb_decoder_input = cap_emb[
             1:-1, :
         ].detach()  # Don't send the last token # size (75, 512)
-        cap_emb_decoder_target = cap_emb[
-            1:, :
-        ].detach()  # Don't include the start token # size (76, 512)
+        cap_emb_decoder_target = cap_tokens[
+            1:
+        ].detach()  # Don't include the start token # size (76)
 
         decoder_input = torch.cat(
             (img_emb.unsqueeze(0), cap_emb_decoder_input), dim=0
@@ -50,7 +51,7 @@ class Flicker30K(Dataset):
         target_output = cap_emb_decoder_target  # size (76, 512)
 
         return {
-            "decoder_input": decoder_input,
-            "target_output": target_output,
-            "attention_mask": attention_mask,
+            "decoder_input": decoder_input.type(torch.float32),
+            "target_output": target_output.type(torch.float32),
+            "attention_mask": attention_mask.type(torch.float32),
         }
