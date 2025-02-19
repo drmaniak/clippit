@@ -219,9 +219,9 @@ class Decoder(nn.Module):
         generated_tokens = []
 
         with torch.no_grad():
-            if decoder_input:
+            if isinstance(decoder_input, torch.Tensor):
                 # Select first element of sequence (corresponding to CLS token)
-                current_sequence = decoder_input[:, 0, :]
+                current_sequence = decoder_input[:, :1, :]
 
             else:
                 # Convert image to embeddings (embed_dim = 512)

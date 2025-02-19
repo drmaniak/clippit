@@ -316,7 +316,7 @@ def main():
     print(f"Using device: {device}")
 
     # Initialize pretrained CLIPModel & CLIPProcessor
-    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)  # type: ignore
     clip_processor: CLIPProcessor = CLIPProcessor.from_pretrained(
         "openai/clip-vit-base-patch32"
     )  # type: ignore

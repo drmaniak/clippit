@@ -19,6 +19,8 @@ class Flicker30K(Dataset):
             self.dataset = pd.read_parquet(datafile)
             self.processor = clip_processor
             self.model = clip_model
+            self.device = self.model.device
+            print(f"Dataset initialized with device: {self.device}")
         else:
             raise FileNotFoundError(f"No datafile found in {datafile}")
 
@@ -28,7 +30,7 @@ class Flicker30K(Dataset):
     def __getitem__(self, idx):
         img_emb, cap = self.dataset.iloc[idx][["img_embedding", "caption"]]
 
-        img_emb = torch.tensor(img_emb)
+        img_emb = torch.tensor(img_emb).to(self.device)
         cap_processed = self.processor(
             text=[cap],
             return_tensors="pt",
@@ -36,13 +38,14 @@ class Flicker30K(Dataset):
             truncation=True,
             max_length=77,
         )
+        cap_processed = {k: v.to(self.device) for k, v in cap_processed.items()}
         cap_tokens = cap_processed["input_ids"].squeeze()  # size (77) # type: ignore
         cap_output = self.model.text_model(
             **cap_processed,
             output_hidden_states=True,
             return_dict=True,
         )
-        attention_mask = cap_processed.attention_mask.squeeze(0)[:-1]  # (76,)
+        attention_mask = cap_processed["attention_mask"].squeeze(0)[:-1]  # (76,)
         cap_emb = cap_output.last_hidden_state.squeeze()  # size (77, 512)
         cap_emb_decoder_input = cap_emb[
             1:-1, :
@@ -57,7 +60,7 @@ class Flicker30K(Dataset):
         target_output = cap_emb_decoder_target  # size (76, 512)
 
         return {
-            "decoder_input": decoder_input.type(torch.float32),
-            "target_output": target_output.type(torch.float32),
-            "attention_mask": attention_mask.type(torch.float32),
+            "decoder_input": decoder_input.to(self.device, dtype=torch.float32),
+            "target_output": target_output.to(self.device, dtype=torch.float32),
+            "attention_mask": attention_mask.to(self.device, dtype=torch.float32),
         }
