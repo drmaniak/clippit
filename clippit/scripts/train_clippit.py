@@ -425,7 +425,10 @@ def main():
                 sample_batch = next(iter(val_loader))
                 sample_input = sample_batch["decoder_input"][:1].to(device)
                 sample_output = model.inference(
-                    sample_input, clip_model, clip_processor
+                    decoder_input=sample_input,
+                    image=None,
+                    clip_model=clip_model,
+                    clip_processor=clip_processor,
                 )
                 sample_text = clip_processor.tokenizer.decode(sample_output)  # type: ignore
                 wandb.log(

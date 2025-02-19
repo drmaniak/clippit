@@ -198,7 +198,8 @@ class Decoder(nn.Module):
 
     def inference(
         self,
-        image: Image,
+        decoder_input: torch.Tensor | None,
+        image: Image | None,
         clip_model: CLIPModel,
         clip_processor: CLIPProcessor,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -218,16 +219,21 @@ class Decoder(nn.Module):
         generated_tokens = []
 
         with torch.no_grad():
-            # Convert image to embeddings (embed_dim = 512)
-            img_input: BatchEncoding = clip_processor(
-                images=image,
-                return_tensors="pt",
-                size={"shortest_edge": 125},
-                padding=True,
-            )
+            if decoder_input:
+                # Select first element of sequence (corresponding to CLS token)
+                current_sequence = decoder_input[:, 0, :]
 
-            img_embeddings = clip_model.get_image_features(**img_input)  # type: ignore of shape (1,512)
-            current_sequence = img_embeddings.unsqueeze(0).to(device)
+            else:
+                # Convert image to embeddings (embed_dim = 512)
+                img_input: BatchEncoding = clip_processor(
+                    images=image,
+                    return_tensors="pt",
+                    size={"shortest_edge": 125},
+                    padding=True,
+                )
+
+                img_embeddings = clip_model.get_image_features(**img_input)  # type: ignore of shape (1,512)
+                current_sequence = img_embeddings.unsqueeze(0).to(device)
 
             for step in range(max_length):
                 logits = self.forward(
