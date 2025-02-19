@@ -30,7 +30,10 @@ class Flicker30K(Dataset):
 
         img_emb = torch.tensor(img_emb)
         cap_processed = self.processor(
-            text=[cap], return_tensors="pt", padding="max_length"
+            text=[cap],
+            return_tensors="pt",
+            padding="max_length",
+            max_length=77,
         )
         cap_tokens = cap_processed["input_ids"].squeeze()  # size (77) # type: ignore
         cap_output = self.model.text_model(
