@@ -1,3 +1,8 @@
+# Set tokenizer parallelism to false to avoid warnings
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import argparse
 import json
 from pathlib import Path
@@ -125,8 +130,8 @@ def train_epoch(
 
             # Reshape for loss calculation
             batch_size, seq_length, num_classes = outputs.shape
-            outputs = outputs.view(-1, num_classes)
-            labels = target_output.view(-1)
+            outputs = outputs.view(-1, num_classes).to(torch.float32)
+            labels = target_output.view(-1).to(torch.long)
 
             # Calculate loss
             loss = criterion(outputs, labels)
@@ -218,10 +223,10 @@ def validate(
 
         # Reshape for loss calculation
         batch_size, seq_length, num_classes = outputs.shape
-        outputs = outputs.view(-1, num_classes)
-        labels = target_output.to(torch.long).squeeze(-1).view(-1)
+        outputs = outputs.view(-1, num_classes).to(torch.float32)
+        labels = target_output.to(torch.long).squeeze(-1)
 
-        loss = criterion(outputs, labels)
+        loss = criterion(outputs, labels.view(-1))
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             print(f"\n=== NaN/Inf detected in loss at batch {batch_idx} ===")
