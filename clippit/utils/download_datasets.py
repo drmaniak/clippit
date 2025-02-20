@@ -60,7 +60,15 @@ def process_and_save_clip_embeddings(
             return_tensors="pt",
             size={"shortest_edge": shortest_edge},
             padding=True,
-        )
+        ).to(device)
+
+        text_input: BatchEncoding = processor(
+            text=captions,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=77,
+        ).to(device)
 
         model_input: BatchEncoding = processor(
             text=captions,
@@ -77,12 +85,21 @@ def process_and_save_clip_embeddings(
         # This obtains the CLS token for the image (batch_size, d_model=512)
         image_output = model.get_image_features(**vision_input).squeeze()  # type: ignore
 
+        # This obtains 77 seq length image for each caption shape (5, 77, d_model=512)
+        text_output = model.text_model(**text_input).last_hidden_state
+
         # We will now pick the top-k most similar captions
         vals, caption_indices = model_output["logits_per_image"].topk(k=topk)
         for idx in caption_indices[0].tolist():
+            caption_embedding = text_output[idx]
+            attention_mask = text_input["attention_mask"][idx]  # type: ignore
+            caption_tokens = text_input["input_ids"][idx]  # type: ignore
             data_row = {
                 "img_embedding": image_output.tolist(),
-                "caption": captions[idx],
+                "caption_text": captions[idx],
+                "caption_embedding": caption_embedding,
+                "attention_mask": attention_mask,
+                "caption_tokens": caption_tokens,
                 "img_id": image_id,
                 "filename": filename,
             }
