@@ -54,7 +54,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 
 def create_dataloaders(
-    config: Dict[str, Any], clip_model: CLIPModel, clip_processor: CLIPProcessor
+    config: Dict[str, Any],
 ):
     train_dataset = Flicker30K(
         datafile=Path(config["data"]["flickr_train_path"]),
@@ -65,9 +65,8 @@ def create_dataloaders(
     )
 
     data_dict = train_dataset[0]
-    decoder_input = data_dict["decoder_input"]
-    target_output = data_dict["target_output"]
-    attention_mask = data_dict["attention_mask"]
+    image_emb = data_dict["image_emb"]
+    caption = data_dict["caption"]
 
     train_loader = DataLoader(
         train_dataset,
@@ -85,7 +84,7 @@ def create_dataloaders(
         pin_memory=True,
     )
 
-    return train_loader, val_loader, (decoder_input, target_output, attention_mask)
+    return train_loader, val_loader, (image_emb, caption)
 
 
 def train_epoch(
@@ -324,24 +323,19 @@ def main():
     )  # type: ignore
 
     # Create dataloaders
-    train_loader, val_loader, (decoder_input, target_output, attention_mask) = (
-        create_dataloaders(config, clip_model, clip_processor)
-    )
+    train_loader, val_loader, (img_embedding, caption) = create_dataloaders(config)
     print(f"Train dataset size: {len(train_loader.dataset)}")  # type: ignore
     print(f"Validation dataset size: {len(val_loader.dataset)}")  # type: ignore
 
-    # Add assertions to verify data sample shapes
-    assert decoder_input.dim() == 2, f"Expected 2D tensor for data_sample, got {decoder_input.dim()}D"  # fmt: skip
-    assert target_output.dim() == 1, f"Expected 1D tensor for label_sample, got {target_output.dim()}D"  # fmt: skip
-    print(f"Data sample shape: {decoder_input.shape}, Label sample shape: {target_output.shape}")  # fmt: skip
-
-    seq_length, input_dim = decoder_input.shape
+    # seq_length, input_dim = decoder_input.shape
+    seq_length = 76
+    input_dim = 512
     num_classes = len(clip_processor.tokenizer.get_vocab())  # type: ignore
 
     # Initialize model
     model = ClippitModel(
-        input_dim=input_dim,
-        seq_length=seq_length,
+        input_dim=512,
+        seq_length=76,
         d_model=config["model"]["d_model"],
         num_decoder_blocks=config["model"]["num_decoder_blocks"],
         num_heads=config["model"]["num_heads"],
