@@ -138,17 +138,22 @@ def train_epoch(
 
             # Debug info
             if batch_idx % 100 == 0:
-                pred_tokens = outputs.argmax(dim=-1)[:10]  # First 10 predictions
-                true_tokens = labels[:10]
+                pred_tokens = outputs.argmax(dim=-1)[:20]  # First 10 predictions
+                true_tokens = labels[:20]
                 pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
                 true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
-                wandb.log(
-                    {
-                        "predictions": wandb.Table(
-                            data=[[pred_text, true_text]], columns=["Predicted", "True"]
-                        )
-                    }
-                )
+                if wandb.run is not None:
+                    predictions_table = wandb.run.summary["predictions_train"]
+                    predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
+                    wandb.log({"predictions_train": predictions_table})
+
+                # wandb.log(
+                #     {
+                #         "predictions_train": wandb.Table(
+                #             data=[[pred_text, true_text]], columns=["Predicted", "True"]
+                #         )
+                #     }
+                # )
 
             # Check for NaN/Inf
             if torch.isnan(loss).any() or torch.isinf(loss).any():
@@ -237,13 +242,19 @@ def validate(
             true_tokens = labels[:10]
             pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
             true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
-            wandb.log(
-                {
-                    "predictions": wandb.Table(
-                        data=[[pred_text, true_text]], columns=["Predicted", "True"]
-                    )
-                }
-            )
+
+            if wandb.run is not None:
+                predictions_table = wandb.run.summary["predictions_val"]
+                predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
+                wandb.log({"predictions_val": predictions_table})
+
+            # wandb.log(
+            #     {
+            #         "predictions_val": wandb.Table(
+            #             data=[[pred_text, true_text]], columns=["Predicted", "True"]
+            #         )
+            #     }
+            # )
 
         # Calculate accuracy
         predictions = outputs.argmax(dim=-1)
@@ -303,11 +314,30 @@ def main():
             assert param in config[section], f"Missing parameter: {param} in {section}"
 
     # Initialize wandb
-    wandb.init(
+
+    run = wandb.init(
         project=f"{config['wandb']['project_name']}",
         config=config,
     )
 
+    # Create tables for logging predictions
+    if run is not None:
+        run.log(
+            {"predictions_train": wandb.Table(columns=["Step", "Predicted", "True"])}
+        )
+        run.log({"predictions_val": wandb.Table(columns=["Step", "Predicted", "True"])})
+        run.log(
+            {
+                "sample_generations": wandb.Table(
+                    columns=[
+                        "Step",
+                        "Inference Caption",
+                        "Forward Pass Caption",
+                        "Ground Truth Caption",
+                    ]
+                )
+            }
+        )
     # Create checkpoint directory
     Path(config["training"]["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
 
@@ -425,6 +455,7 @@ def main():
                 sample_batch = next(iter(val_loader))
                 sample_input = sample_batch["decoder_input"][:1].to(device)
                 sample_mask = sample_batch["attention_mask"][:1].to(device)
+                sample_target = sample_batch["target_output"][:1].to(device)
 
                 # Forward pass with teacher forcing for validation
                 model_forward_output = model(sample_input, sample_mask)
@@ -434,6 +465,10 @@ def main():
                     model_forward_output.argmax(dim=-1).tolist(),
                     skip_special_tokens=True,
                 )
+                target_caption = clip_processor.tokenizer.batch_decode(  # type: ignore
+                    sample_target.tolist(),
+                    skip_special_tokens=True,
+                )
 
                 print(f"Forward Generated Caption: {forward_caption}")
                 sample_caption, sample_tokens = model.inference(
@@ -441,15 +476,40 @@ def main():
                     image=None,
                     clip_model=clip_model,
                     clip_processor=clip_processor,
+                    max_length=50,
+                    min_length=12,
                 )
-                wandb.log(
-                    {
-                        "sample_generations": wandb.Table(
-                            data=[[sample_caption, forward_caption]],
-                            columns=["Generated Caption", "Forward Caption"],
-                        )
-                    }
-                )
+                if wandb.run is not None:
+                    generations_table = wandb.run.summary["sample_generations"]
+                    generations_table.add_data(  # type: ignore
+                        epoch,
+                        sample_caption,
+                        (
+                            forward_caption[0]
+                            if isinstance(forward_caption, list)
+                            else forward_caption
+                        ),
+                        (
+                            target_caption[0]
+                            if isinstance(target_caption, list)
+                            else target_caption
+                        ),
+                    )
+                    wandb.log({"sample_generations": generations_table})
+
+            #     wandb.log(
+            #         {
+            #             "sample_generations": wandb.Table(
+            #                 data=[[sample_caption, forward_caption, target_caption]],
+            #                 columns=[
+            #                     "Inference Caption",
+            #                     "Forward Pass Caption",
+            #                     "Ground Truth Caption",
+            #                 ],
+            #             )
+            #         }
+            #     )
+
             model.train()
         # Print epoch summary
         print(f"Train Loss: {train_loss:.4f} | Train Accuracy: {train_accuracy:.2f}%")

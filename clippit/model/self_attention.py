@@ -43,18 +43,48 @@ class SelfAttentionHead(nn.Module):
         if self.masked:
             causal_attention_mask = self.compute_attention_mask(scaled_attention_map)
             if custom_attn_mask is not None:
+                # Convert mask to proper shape: [batch_size, 1, seq_length]
+                # and expand to [batch_size, seq_length, seq_length]
                 seq_length = scaled_attention_map.shape[1]
                 padding_mask = (
                     custom_attn_mask[:, :seq_length]
-                    .type(torch.bool)
+                    .bool()
                     .to(scaled_attention_map.device)
                 )
-                padding_mask = ~padding_mask.unsqueeze(1).expand(-1, seq_length, -1)
-                causal_attention_mask = causal_attention_mask | padding_mask
+                padding_mask = padding_mask.unsqueeze(1).expand(-1, seq_length, -1)
 
+                # Combine masks:
+                # - causal_attention_mask prevents looking ahead
+                # - padding_mask allows attending only to valid tokens
+                attention_mask = causal_attention_mask | (~padding_mask)
+
+                # Debug mask information
+                # print("\nMask Debug Info:")
+                # print(f"Causal mask shape: {causal_attention_mask.shape}")
+                # print(f"Padding mask shape: {padding_mask.shape}")
+                # print(f"Combined mask shape: {attention_mask.shape}")
+                # print(f"Attention map shape: {scaled_attention_map.shape}")
+                # print(
+                #     f"Number of True values in causal mask: {causal_attention_mask.sum().item()}"
+                # )
+                # print(
+                #     f"Number of True values in padding mask: {padding_mask.sum().item()}"
+                # )
+                # print(
+                #     f"Number of True values in combined mask: {attention_mask.sum().item()}"
+                # )
+                # print(
+                #     f"Sample of attention weights before masking:\n{scaled_attention_map[0, :15, :15]}"
+                # )
+
+                # Apply mask (mask out with -inf where attention_mask is True)
                 scaled_attention_map = scaled_attention_map.masked_fill(
-                    causal_attention_mask, -torch.inf
+                    attention_mask, float("-inf")
                 )
+
+                # print(
+                #     f"Sample of attention weights after masking:\n{scaled_attention_map[0, :15, :15]}"
+                # )
 
         attention_weights = F.softmax(
             scaled_attention_map, dim=-1

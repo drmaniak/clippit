@@ -159,6 +159,13 @@ class Decoder(nn.Module):
                          Shape: (batch_size, seq_length, num_classes)
         """
         if custom_attn_mask is not None:
+            # print("\nDecoder Mask Debug Info:")
+            # print(f"Input shape: {x.shape}")
+            # print(f"Mask shape: {custom_attn_mask.shape}")
+            # print(f"Mask dtype: {custom_attn_mask.dtype}")
+            # print(f"Number of True values in mask: {custom_attn_mask.sum().item()}")
+            # print(f"Percentage of True values: {(custom_attn_mask.sum() / custom_attn_mask.numel() * 100):.2f}%")
+
             if custom_attn_mask.dim() != 2:
                 raise ValueError(f"Expected 2D mask, got {custom_attn_mask.dim()}D")
             if custom_attn_mask.shape[0] != x.shape[0]:
@@ -169,6 +176,10 @@ class Decoder(nn.Module):
                 raise ValueError(
                     f"Mask sequence length {custom_attn_mask.shape[1]} is shorter than input sequence length {x.shape[1]}"
                 )
+
+            # Print sample of mask values
+            # print("\nSample of mask values (first sequence):")
+            # print(custom_attn_mask[0, :10])  # First 10 values of first sequence
 
         batch_size = x.shape[0]
 
@@ -187,7 +198,7 @@ class Decoder(nn.Module):
         # Pass through decoder blocks
         decoder_output = decoder_input
         for i, decoder_block in enumerate(self.decoder_blocks):
-            decoder_output = decoder_block(decoder_output)
+            decoder_output = decoder_block(decoder_output, custom_attn_mask)
 
         # Project to num_classes for output prediction
         logits = self.output_projection(
@@ -206,99 +217,99 @@ class Decoder(nn.Module):
         temperature: float = 0.7,
         top_k: int = 50,
         max_length: int | None = None,
+        min_length: int = 15,
     ):
-        """Inference through the trained model
+        """Generate a caption using the trained decoder model.
 
         Args:
-            x (PIL.Image): An Image that we want a caption generated for.
-            clip_model (CLIPModel): A pretrianed CLIPModel used to get image embeddings
-            clip_processor (CLIPProcesor): A pretrained processor from CLIP used for tokenizing/vocabulary
-
+            decoder_input: Optional pre-computed embeddings
+            image: Optional input image to caption
+            clip_model: CLIP model for computing embeddings
+            clip_processor: CLIP processor for tokenization
+            device: Device to run inference on
+            temperature: Sampling temperature (higher = more diverse)
+            top_k: Number of highest probability tokens to keep
+            max_length: Maximum caption length
         """
-
         self.eval()
 
-        generated_tokens = []
-
         with torch.no_grad():
-            if isinstance(decoder_input, torch.Tensor):
-                # Select first element of sequence (corresponding to CLS token)
-                current_sequence = decoder_input[:, :1, :]
-
+            # Get initial sequence embedding
+            if decoder_input is not None:
+                # Use provided embeddings (e.g. from training data)
+                current_sequence = decoder_input[:, :1, :].to(device)
             else:
-                # Convert image to embeddings (embed_dim = 512)
-                img_input: BatchEncoding = clip_processor(
-                    images=image,
-                    return_tensors="pt",
-                    size={"shortest_edge": 150},
-                    padding=True,
-                )
+                # Compute embeddings from image
+                inputs = clip_processor(
+                    images=image, return_tensors="pt", padding=True
+                ).to(device)
 
-                img_embeddings = clip_model.get_image_features(**img_input)  # type: ignore of shape (1,512)
-                current_sequence = img_embeddings.unsqueeze(0).to(device)
+                image_features = clip_model.get_image_features(**inputs)  # type: ignore
+                current_sequence = image_features.unsqueeze(1)
 
-            if max_length is None:
-                max_length = self.seq_length // 2
+            # Initialize generation
+            max_length = max_length or self.seq_length
+            generated_tokens = []
+
+            # Get special token IDs
+            bos_token_id, eos_token_id = clip_processor.tokenizer.all_special_ids  # type: ignore
 
             for step in range(max_length):
-                logits = self.forward(
-                    current_sequence
-                )  # (1, curr_seq_length, num_classes)
+                # Create attention mask for generated sequence (all tokens are valid)
+                seq_mask = torch.ones(
+                    (1, current_sequence.shape[1]), device=device, dtype=torch.bool
+                )
 
-                # Get logits for the last position and apply temperature
-                next_token_logits = logits[:, -1, :] / temperature
+                # Get model predictions
+                logits = self.forward(current_sequence, seq_mask)
+                next_token_logits = logits[:, -1, :]
+
+                # Apply temperature and length penalties
+                next_token_logits = next_token_logits / temperature
+
+                # Prevent EOS before min_length
+                if step < min_length:
+                    next_token_logits[:, eos_token_id] = float("-inf")
+
+                # Add EOS penalty to encourage longer sequences
+                next_token_logits[:, eos_token_id] -= 2.0
+
+                # Filter special tokens
+                next_token_logits[:, bos_token_id] = float("-inf")
 
                 # Apply top-k filtering
-                if top_k > 0:
-                    top_k_logits, top_k_indices = torch.topk(next_token_logits, top_k)
-                    next_token_logits = torch.full_like(
-                        next_token_logits, float("-inf")
-                    )
-                    next_token_logits.scatter_(1, top_k_indices, top_k_logits)
+                top_k_logits, top_k_indices = torch.topk(next_token_logits, top_k)
+                next_token_logits = torch.full_like(next_token_logits, float("-inf"))
+                next_token_logits.scatter_(1, top_k_indices, top_k_logits)
 
-                # Convert logits to probabilities
+                # Sample next token
                 probs = torch.softmax(next_token_logits, dim=-1)
-
-                # Sample from the probability distribution
                 next_token = torch.multinomial(probs, num_samples=1)
                 token_id = next_token.item()
 
+                # Stop if EOS token
+                if token_id == eos_token_id:
+                    break
+
                 generated_tokens.append(token_id)
 
-                # Early stopping conditions
-                if token_id == clip_processor.tokenizer.eos_token_id:  # type: ignore
-                    break
-
-                if len(generated_tokens) >= max_length:
-                    break
-
-                # Convert predicted token to embedding
-                token_tensor = torch.tensor([[token_id]]).to(device)
-                token_embedding = clip_model.text_model(
-                    token_tensor, output_hidden_states=True, return_dict=True
-                ).last_hidden_state
-
-                # Update sequence for next iteration
-                current_sequence = torch.cat((current_sequence, token_embedding), dim=1)
-
-                # Optional: print intermediate results
-                if step % 5 == 0:  # Print every 5 steps
-                    decoded_tokens = clip_processor.tokenizer.decode(generated_tokens)  # type: ignore
-                    print(f"Step {step + 1}: {decoded_tokens}")
-
-                # Convert predicted token to embedding
-                token_tensor = torch.tensor([[token_id]]).to(device)
-                token_embedding = clip_model.text_model(
-                    token_tensor, output_hidden_states=True, return_dict=True
-                ).last_hidden_state  # size (1, 1, 512)
-
-                next_sequence = torch.cat((current_sequence, token_embedding), dim=1)
-                current_sequence = (
-                    next_sequence  # (1, current_seq_length + 1, num_classes)
+                # Get embedding for next token
+                token_inputs = torch.tensor([[token_id]], device=device)
+                token_outputs = clip_model.text_model(
+                    token_inputs, output_hidden_states=True, return_dict=True
                 )
+                token_embedding = token_outputs.last_hidden_state
 
-            print(f"-" * 50)
+                # Update sequence
+                current_sequence = torch.cat([current_sequence, token_embedding], dim=1)
+
+                # Debug output
+                if step % 5 == 0:
+                    partial_caption = clip_processor.tokenizer.decode(generated_tokens)  # type: ignore
+                    print(f"Step {step}: {partial_caption}")
+
+            # Decode final caption
             caption = clip_processor.tokenizer.decode(generated_tokens)  # type: ignore
-            print(f"Final Caption: {caption}")
+            print(f"\nFinal caption: {caption}")
 
             return caption, generated_tokens
