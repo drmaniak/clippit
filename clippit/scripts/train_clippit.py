@@ -1,6 +1,7 @@
 # Set tokenizer parallelism to false to avoid warnings
 import os
 
+from torch.optim.lr_scheduler import OneCycleLR
 from wandb.data_types import Table
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -101,6 +102,7 @@ def train_epoch(
     train_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: OneCycleLR,
     device: torch.device,
     epoch: int,
     clip_processor: CLIPProcessor,
@@ -170,6 +172,7 @@ def train_epoch(
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
+            scheduler.step()
 
         except RuntimeError as e:
             print(f"\nError in batch {batch_idx}: {str(e)}")
@@ -240,23 +243,15 @@ def validate(
             print(f"\n=== NaN/Inf detected in loss at batch {batch_idx} ===")
             raise ValueError("NaN/Inf in loss")
 
-        if batch_idx % 100 == 0:
-            pred_tokens = outputs.argmax(dim=-1)[:10]  # First 10 predictions
-            true_tokens = labels[:10]
+        if batch_idx % 25 == 0:
+            pred_tokens = outputs.argmax(dim=-1)[:20]  # First 10 predictions
+            true_tokens = labels[:20]
             pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
             true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
 
             if wandb.run is not None:
                 val_predictions_table.add_data(batch_idx, pred_text, true_text)
                 wandb.log({"predictions_val": val_predictions_table})
-
-            # wandb.log(
-            #     {
-            #         "predictions_val": wandb.Table(
-            #             data=[[pred_text, true_text]], columns=["Predicted", "True"]
-            #         )
-            #     }
-            # )
 
         # Calculate accuracy
         predictions = outputs.argmax(dim=-1)
@@ -382,14 +377,6 @@ def main():
     print(f"Hidden dimension: {config['model']['d_model']}")
     print(f"Number of decoder blocks: {config['model']['num_decoder_blocks']}")
 
-    # Initialize criterion and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config["training"]["learning_rate"],
-        weight_decay=config["training"]["weight_decay"],
-    )
-
     # Initialize criterion, optimizer and scheduler
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(
@@ -424,6 +411,7 @@ def main():
             train_loader,
             criterion,
             optimizer,
+            scheduler,
             device,
             epoch + 1,
             clip_processor,
@@ -469,8 +457,10 @@ def main():
                     model_forward_output.argmax(dim=-1).tolist(),
                     skip_special_tokens=True,
                 )
+                sample_labels = sample_target.view(-1).to(torch.long).to("cpu")
+
                 target_caption = clip_processor.tokenizer.batch_decode(  # type: ignore
-                    sample_target.tolist(),
+                    sample_labels,
                     skip_special_tokens=True,
                 )
 
