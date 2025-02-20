@@ -7,17 +7,17 @@
     "dropout": 0.1
   },
   "training": {
-    "batch_size": 512,
-    "learning_rate": 1e-4,
+    "batch_size": 256,
+    "learning_rate": 2e-4,
     "weight_decay": 0.01,
     "num_epochs": 20,
     "checkpoint_dir": "checkpoints/flickr30k"
   },
   "data": {
-    "flickr_train_path": "clippit/datafiles/flickr_train_top5.parquet",
-    "flickr_val_path": "clippit/datafiles/flickr_val_top5.parquet",
-    "flickr_test_path": "clippit/datafiles/flickr_test_top5.parquet",
-    "num_workers": 0
+    "flickr_train_path": "clippit/datafiles/flickr_train_top1.parquet",
+    "flickr_val_path": "clippit/datafiles/flickr_val_top1.parquet",
+    "flickr_test_path": "clippit/datafiles/flickr_test_top1.parquet",
+    "num_workers": 8
   },
   "wandb": {
     "project_name": "CLIP-Decoder",

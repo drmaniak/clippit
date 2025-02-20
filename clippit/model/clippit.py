@@ -2,14 +2,8 @@ import torch
 import torch.nn as nn
 from PIL.Image import Image
 from transformers import CLIPModel, CLIPProcessor
-from transformers.models.clip.modeling_clip import CLIPOutput
-from transformers.tokenization_utils_base import BatchEncoding
 
 from clippit.model.decoder import Decoder
-
-# from .cross_attention import MultiHeadedCrossAttention
-from .positional_embedding import PositionalEmbedding
-from .self_attention import MultiHeadedSelfAttention
 
 
 class ClippitModel(nn.Module):
@@ -23,7 +17,9 @@ class ClippitModel(nn.Module):
         mlp_ratio: float,
         dropout: float | None = None,
         num_classes: int = 10,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
+        self.device = device
         super().__init__()
 
         self.input_dim = input_dim
@@ -36,7 +32,9 @@ class ClippitModel(nn.Module):
         self.num_classes = num_classes
 
         # Initialize the pretrained CLIP model for embedding captions and creating inputs for the decoder
-        self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+        self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(
+            self.device  # type: ignore
+        )
         self.clip_processor: CLIPProcessor = CLIPProcessor.from_pretrained(
             "openai/clip-vit-base-patch32"
         )  # type: ignore
@@ -67,7 +65,7 @@ class ClippitModel(nn.Module):
     def forward(
         self,
         img_embedding: torch.Tensor,
-        cap: str,
+        caps: list[str],  # Now takes a list of captions
         custom_attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through the Decoder.
@@ -90,7 +88,7 @@ class ClippitModel(nn.Module):
         pass
 
         decoder_input, attention_mask, target_tokens = self.prepare_data(
-            img_embedding, cap
+            img_embedding, caps
         )
 
         logits = self.decoder(
@@ -101,39 +99,56 @@ class ClippitModel(nn.Module):
 
     def prepare_data(
         self,
-        img_embedding: torch.Tensor,
-        cap: str,
+        img_embedding: torch.Tensor,  # (batch_size, 512)
+        caps: list[str],
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
-        img_emb = img_embedding.unsqueeze(1)  # (batch_size, 1, 512)
+        batch_size = img_embedding.size(0)
 
+        # Ensure img_embedding is on the correct device
+        img_emb = img_embedding.to(self.device).unsqueeze(1)  # (batch_size, 1, 512)
+
+        # Process all captions in batch
         cap_processed = self.clip_processor(
-            text=[cap],
+            text=caps,
             return_tensors="pt",
             padding="max_length",
             truncation=True,
             max_length=77,
         )
-        cap_processed = {k: v.to(self.device) for k, v in cap_processed.items()}
-        cap_tokens = cap_processed["input_ids"].squeeze()  # size (77) # type: ignore
+
+        # Move processed data to device
+        cap_processed = {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+            for k, v in cap_processed.items()
+        }
+
+        # Get token IDs (batch_size, 77)
+        cap_tokens = cap_processed["input_ids"]  # type: ignore
+
+        # Process through CLIP text encoder
         cap_output = self.clip_model.text_model(
             **cap_processed,
             output_hidden_states=True,
             return_dict=True,
         )
-        attention_mask = cap_processed["attention_mask"].squeeze(0)[:-1]  # (76,)
 
-        cap_emb = cap_output.last_hidden_state.squeeze()  # size (77, 512)
-        cap_emb_decoder_input = cap_emb[
-            1:-1, :
-        ].detach()  # Don't send the last token # size (75, 512)
+        # Get attention masks (batch_size, 76)
+        attention_mask = cap_processed["attention_mask"][:, :-1]
 
-        cap_emb_decoder_target = cap_tokens[
-            1:
-        ].detach()  # Don't include the start token # size (76)
+        # Get embeddings (batch_size, 77, 512)
+        cap_emb = cap_output.last_hidden_state
 
-        decoder_input = torch.cat(
-            (img_emb.unsqueeze(0), cap_emb_decoder_input), dim=0
-        )  # size (76, 512)
+        # Remove first and last tokens for decoder input (batch_size, 75, 512)
+        cap_emb_decoder_input = cap_emb[:, 1:-1, :].detach()
+
+        # Remove first token for target (batch_size, 76)
+        cap_emb_decoder_target = cap_tokens[:, 1:].detach()
+
+        # Concatenate image embedding with caption embeddings
+        # img_emb: (batch_size, 1, 512)
+        # cap_emb_decoder_input: (batch_size, 75, 512)
+        # Result: (batch_size, 76, 512)
+        decoder_input = torch.cat((img_emb, cap_emb_decoder_input), dim=1)
 
         return decoder_input, attention_mask, cap_emb_decoder_target
 

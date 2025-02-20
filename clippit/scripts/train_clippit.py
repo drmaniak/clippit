@@ -126,7 +126,7 @@ def train_epoch(
             # Reshape for loss calculation
             batch_size, seq_length, num_classes = outputs.shape
             outputs = outputs.view(-1, num_classes).to(torch.float32)
-            labels = target_output.view(-1).to(torch.long)
+            labels = target_output.reshape(-1).to(torch.long)
 
             # Calculate loss
             loss = criterion(outputs, labels)
@@ -214,7 +214,7 @@ def validate(
         # Reshape for loss calculation
         batch_size, seq_length, num_classes = outputs.shape
         outputs = outputs.view(-1, num_classes).to(torch.float32)
-        labels = target_output.view(-1).to(torch.long)
+        labels = target_output.reshape(-1).to(torch.long)
 
         loss = criterion(outputs, labels.view(-1))
 
@@ -419,28 +419,33 @@ def main():
             model.eval()
             with torch.no_grad():
                 sample_batch = next(iter(val_loader))
-                sample_input = sample_batch["decoder_input"][:1].to(device)
-                sample_mask = sample_batch["attention_mask"][:1].to(device)
-                sample_target = sample_batch["target_output"][:1].to(device)
+                sample_img_emb = sample_batch["image_emb"][:1].to(
+                    device
+                )  # Take first image
+                sample_caption = [sample_batch["caption"][0]]  # Take first caption
 
                 # Forward pass with teacher forcing for validation
-                model_forward_output = model(sample_input, sample_mask)
+                outputs, target_output = model(sample_img_emb, sample_caption)
 
-                model_forward_output = model_forward_output.to("cpu")
-                forward_caption = clip_processor.tokenizer.batch_decode(  # type: ignore
-                    model_forward_output.argmax(dim=-1).tolist(),
+                # Get model predictions
+                pred_tokens = outputs[0].argmax(dim=-1).cpu()  # Take first sequence
+                true_tokens = target_output[0].cpu()  # Take first sequence
+
+                # Decode tokens to text
+                forward_caption = clip_processor.tokenizer.decode(  # type: ignore
+                    pred_tokens,
                     skip_special_tokens=True,
                 )
-                sample_labels = sample_target.view(-1).to(torch.long).to("cpu")
-
-                target_caption = clip_processor.tokenizer.batch_decode(  # type: ignore
-                    sample_labels,
+                target_caption = clip_processor.tokenizer.decode(  # type: ignore
+                    true_tokens,
                     skip_special_tokens=True,
                 )
 
                 print(f"Forward Generated Caption: {forward_caption}")
+
+                # Get inference caption (if you have an inference method)
                 sample_caption, sample_tokens = model.inference(
-                    img_emb=sample_input,
+                    img_emb=sample_img_emb,
                     image=None,
                     max_length=50,
                     min_length=12,
