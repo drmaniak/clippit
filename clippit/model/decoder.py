@@ -209,7 +209,7 @@ class Decoder(nn.Module):
 
     def inference(
         self,
-        decoder_input: torch.Tensor | None,
+        img_emb: torch.Tensor | None,
         image: Image | None,
         clip_model: CLIPModel,
         clip_processor: CLIPProcessor,
@@ -235,9 +235,9 @@ class Decoder(nn.Module):
 
         with torch.no_grad():
             # Get initial sequence embedding
-            if decoder_input is not None:
+            if img_emb is not None:
                 # Use provided embeddings (e.g. from training data)
-                current_sequence = decoder_input[:, :1, :].to(device)
+                current_sequence = img_emb.unsqueeze(1).to(device)
             else:
                 # Compute embeddings from image
                 inputs = clip_processor(

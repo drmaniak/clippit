@@ -42,11 +42,8 @@ def process_and_save_clip_embeddings(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Prepare output file
+
     data_dict = {"train": [], "test": [], "val": []}
-    chunk_count = 0
-    rows_count = 0
-    MAX_ROWS = 20000  # Maximum rows before saving to disk
-    chunk_files = []  # Keep track of temporary chunk files
 
     # Process dataset in batches
     for row in tqdm(dataset, desc="Processing Dataset", total=len(dataset)):
@@ -65,14 +62,6 @@ def process_and_save_clip_embeddings(
             padding=True,
         ).to(device)
 
-        text_input: BatchEncoding = processor(
-            text=captions,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=77,
-        ).to(device)
-
         model_input: BatchEncoding = processor(
             text=captions,
             images=image,
@@ -88,77 +77,29 @@ def process_and_save_clip_embeddings(
         # This obtains the CLS token for the image (batch_size, d_model=512)
         image_output = model.get_image_features(**vision_input).squeeze()  # type: ignore
 
-        # This obtains 77 seq length image for each caption shape (5, 77, d_model=512)
-        text_output = model.text_model(**text_input).last_hidden_state
-
         # We will now pick the top-k most similar captions
-        vals, caption_indices = model_output["logits_per_image"].topk(k=topk)
+        _, caption_indices = model_output["logits_per_image"].topk(k=topk)
         for idx in caption_indices[0].tolist():
-            caption_embedding = text_output[idx].tolist()
-            attention_mask = text_input["attention_mask"][idx].tolist()  # type: ignore
-            caption_tokens = text_input["input_ids"][idx].tolist()  # type: ignore
             data_row = {
                 "img_embedding": image_output.tolist(),
                 "caption_text": captions[idx],
-                "caption_embedding": caption_embedding,
-                "attention_mask": attention_mask,
-                "caption_tokens": caption_tokens,
                 "img_id": image_id,
                 "filename": filename,
             }
             # Append the row to the data_list for the corresponding split
             data_dict[split].append(data_row)
-            rows_count += 1
 
-            # Save to disk if we hit the row limit
-            if rows_count >= MAX_ROWS:
-                print(f"\nSaving chunk {chunk_count} to disk...")
-                for split_name in ["train", "test", "val"]:
-                    if data_dict[split_name]:  # Only save if there's data
-                        chunk_file = (
-                            output_dir
-                            / f"flickr_{split_name}_chunk_{chunk_count}.parquet"
-                        )
-                        chunk_files.append(chunk_file)
-                        df = pd.DataFrame(data_dict[split_name])
-                        df.to_parquet(chunk_file)
-                        data_dict[split_name] = []  # Clear the list
-                chunk_count += 1
-                rows_count = 0
-
-        torch.cuda.empty_cache()
-
-    # Save any remaining data
-    if any(len(data_dict[split]) > 0 for split in ["train", "test", "val"]):
-        print(f"\nSaving final chunk {chunk_count} to disk...")
-        for split_name in ["train", "test", "val"]:
-            if data_dict[split_name]:
-                chunk_file = (
-                    output_dir / f"flickr_{split_name}_chunk_{chunk_count}.parquet"
-                )
-                chunk_files.append(chunk_file)
-                df = pd.DataFrame(data_dict[split_name])
-                df.to_parquet(chunk_file)
-
-    # Merge all chunks into final files
-    print("\nMerging chunks into final files...")
-    for split_name in ["train", "test", "val"]:
-        split_chunks = [
-            f for f in chunk_files if f.name.startswith(f"flickr_{split_name}_chunk_")
-        ]
-        if split_chunks:
-            dfs = [pd.read_parquet(chunk) for chunk in split_chunks]
-            if dfs:
-                final_df = pd.concat(dfs, ignore_index=True)
-                final_file = output_dir / f"flickr_{split_name}_top{topk}.parquet"
-                final_df.to_parquet(final_file)
-                print(f"Created {final_file} with {len(final_df)} rows")
-
-    # Clean up chunk files
-    print("\nCleaning up temporary files...")
-    for chunk_file in chunk_files:
-        if chunk_file.exists():
-            chunk_file.unlink()
+    print("Saving data to parquet files")
+    # Once done with making lists, create dataframes, save as parquet
+    save_dataframe_parquet(
+        data_dict=data_dict, topk=topk, split="train", output_dir=output_dir
+    )
+    save_dataframe_parquet(
+        data_dict=data_dict, topk=topk, split="val", output_dir=output_dir
+    )
+    save_dataframe_parquet(
+        data_dict=data_dict, topk=topk, split="test", output_dir=output_dir
+    )
 
 
 def save_dataframe_parquet(

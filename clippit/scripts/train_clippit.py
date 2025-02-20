@@ -4,6 +4,8 @@ import os
 from torch.optim.lr_scheduler import OneCycleLR
 from wandb.data_types import Table
 
+from clippit.model.clippit import ClippitModel
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import argparse
@@ -14,7 +16,6 @@ from typing import Any, Dict
 import torch
 import torch.nn as nn
 import wandb
-from torch._prims_common import FloatLike
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
@@ -57,21 +58,11 @@ def create_dataloaders(
 ):
     train_dataset = Flicker30K(
         datafile=Path(config["data"]["flickr_train_path"]),
-        clip_model=clip_model,
-        clip_processor=clip_processor,
     )
 
     val_dataset = Flicker30K(
         datafile=Path(config["data"]["flickr_val_path"]),
-        clip_model=clip_model,
-        clip_processor=clip_processor,
     )
-
-    # val_dataset = Flicker30K(
-    #     datafile=Path(config["data"]["flickr_test_path"]),
-    #     clip_model=clip_model,
-    #     clip_processor=clip_processor,
-    # )
 
     data_dict = train_dataset[0]
     decoder_input = data_dict["decoder_input"]
@@ -98,7 +89,7 @@ def create_dataloaders(
 
 
 def train_epoch(
-    model: nn.Module,
+    model: ClippitModel,
     train_loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -121,16 +112,16 @@ def train_epoch(
     )
 
     for batch_idx, batch_dict in enumerate(progress_bar):
-        decoder_input = batch_dict["decoder_input"].to(device)
-        target_output = batch_dict["target_output"].to(device)
-        attention_mask = batch_dict["attention_mask"].to(device)
+        image_emb = batch_dict["image_emb"].to(device)
+        caption = batch_dict["caption"]
 
         optimizer.zero_grad()
+        target_output = torch.Tensor([])
 
         try:
             # Forward pass
-            outputs = model(
-                decoder_input, attention_mask
+            outputs, target_output = model(
+                image_emb, caption
             )  # shape: (batch_size, seq_len, vocab_size)
 
             # Reshape for loss calculation
@@ -142,22 +133,14 @@ def train_epoch(
             loss = criterion(outputs, labels)
 
             # Debug info
-            if batch_idx % 100 == 0:
-                pred_tokens = outputs.argmax(dim=-1)[:20]  # First 10 predictions
-                true_tokens = labels[:20]
+            if batch_idx % 50 == 0:
+                pred_tokens = outputs.argmax(dim=-1)[:25]  # First 10 predictions
+                true_tokens = labels[:25]
                 pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
                 true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
                 if wandb.run is not None:
                     train_predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
                     wandb.log({"predictions_train": train_predictions_table})
-
-                # wandb.log(
-                #     {
-                #         "predictions_train": wandb.Table(
-                #             data=[[pred_text, true_text]], columns=["Predicted", "True"]
-                #         )
-                #     }
-                # )
 
             # Check for NaN/Inf
             if torch.isnan(loss).any() or torch.isinf(loss).any():
@@ -176,9 +159,7 @@ def train_epoch(
 
         except RuntimeError as e:
             print(f"\nError in batch {batch_idx}: {str(e)}")
-            print(
-                f"Shapes - Input: {decoder_input.shape}, Target: {target_output.shape}"
-            )
+            print(f"Shapes - Input: {image_emb.shape}, Target: {target_output.shape}")
             raise e
 
         # Calculate accuracy
@@ -206,7 +187,7 @@ def train_epoch(
 
 @torch.no_grad()
 def validate(
-    model: nn.Module,
+    model: ClippitModel,
     val_loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
@@ -225,12 +206,11 @@ def validate(
     )
 
     for batch_idx, batch_dict in enumerate(progress_bar):
-        decoder_input = batch_dict["decoder_input"].to(device)
-        target_output = batch_dict["target_output"].to(device)
-        attention_mask = batch_dict["attention_mask"].to(device)
+        image_emb = batch_dict["image_emb"].to(device)
+        caption = batch_dict["caption"]
 
         # Forward pass with teacher forcing for validation
-        outputs = model(decoder_input, attention_mask)
+        outputs, target_output = model(image_emb, caption)
 
         # Reshape for loss calculation
         batch_size, seq_length, num_classes = outputs.shape
@@ -243,7 +223,7 @@ def validate(
             print(f"\n=== NaN/Inf detected in loss at batch {batch_idx} ===")
             raise ValueError("NaN/Inf in loss")
 
-        if batch_idx % 25 == 0:
+        if batch_idx % 15 == 0:
             pred_tokens = outputs.argmax(dim=-1)[:20]  # First 10 predictions
             true_tokens = labels[:20]
             pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
@@ -359,7 +339,7 @@ def main():
     num_classes = len(clip_processor.tokenizer.get_vocab())  # type: ignore
 
     # Initialize model
-    model = Decoder(
+    model = ClippitModel(
         input_dim=input_dim,
         seq_length=seq_length,
         d_model=config["model"]["d_model"],
@@ -466,10 +446,8 @@ def main():
 
                 print(f"Forward Generated Caption: {forward_caption}")
                 sample_caption, sample_tokens = model.inference(
-                    decoder_input=sample_input,
+                    img_emb=sample_input,
                     image=None,
-                    clip_model=clip_model,
-                    clip_processor=clip_processor,
                     max_length=50,
                     min_length=12,
                 )
