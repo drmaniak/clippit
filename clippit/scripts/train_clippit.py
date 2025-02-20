@@ -1,6 +1,8 @@
 # Set tokenizer parallelism to false to avoid warnings
 import os
 
+from wandb.data_types import Table
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import argparse
@@ -102,6 +104,7 @@ def train_epoch(
     device: torch.device,
     epoch: int,
     clip_processor: CLIPProcessor,
+    train_predictions_table: Table,
 ):
     """Train for one epoch."""
     model.train()
@@ -143,9 +146,8 @@ def train_epoch(
                 pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
                 true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
                 if wandb.run is not None:
-                    predictions_table = wandb.run.summary["predictions_train"]
-                    predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
-                    wandb.log({"predictions_train": predictions_table})
+                    train_predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
+                    wandb.log({"predictions_train": train_predictions_table})
 
                 # wandb.log(
                 #     {
@@ -206,6 +208,7 @@ def validate(
     criterion: nn.Module,
     device: torch.device,
     clip_processor: CLIPProcessor,
+    val_predictions_table: Table,
 ):
     model.eval()
     total_loss = 0
@@ -244,9 +247,8 @@ def validate(
             true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
 
             if wandb.run is not None:
-                predictions_table = wandb.run.summary["predictions_val"]
-                predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
-                wandb.log({"predictions_val": predictions_table})
+                val_predictions_table.add_data(batch_idx, pred_text, true_text)
+                wandb.log({"predictions_val": val_predictions_table})
 
             # wandb.log(
             #     {
@@ -315,29 +317,24 @@ def main():
 
     # Initialize wandb
 
+    # Initialize wandb and create tables
     run = wandb.init(
         project=f"{config['wandb']['project_name']}",
         config=config,
     )
 
     # Create tables for logging predictions
-    if run is not None:
-        run.log(
-            {"predictions_train": wandb.Table(columns=["Step", "Predicted", "True"])}
-        )
-        run.log({"predictions_val": wandb.Table(columns=["Step", "Predicted", "True"])})
-        run.log(
-            {
-                "sample_generations": wandb.Table(
-                    columns=[
-                        "Step",
-                        "Inference Caption",
-                        "Forward Pass Caption",
-                        "Ground Truth Caption",
-                    ]
-                )
-            }
-        )
+    train_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
+    val_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
+    sample_generations_table: Table = wandb.Table(
+        columns=[
+            "Step",
+            "Inference Caption",
+            "Forward Pass Caption",
+            "Ground Truth Caption",
+        ]
+    )
+
     # Create checkpoint directory
     Path(config["training"]["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
 
@@ -423,12 +420,19 @@ def main():
 
         # Train
         train_loss, train_accuracy, train_perplexity = train_epoch(
-            model, train_loader, criterion, optimizer, device, epoch + 1, clip_processor
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            epoch + 1,
+            clip_processor,
+            train_predictions_table,
         )
 
         # Validate
         val_loss, val_accuracy, val_perplexity = validate(
-            model, val_loader, criterion, device, clip_processor
+            model, val_loader, criterion, device, clip_processor, val_predictions_table
         )
 
         # Enhanced logging
@@ -480,8 +484,7 @@ def main():
                     min_length=12,
                 )
                 if wandb.run is not None:
-                    generations_table = wandb.run.summary["sample_generations"]
-                    generations_table.add_data(  # type: ignore
+                    sample_generations_table.add_data(
                         epoch,
                         sample_caption,
                         (
@@ -495,7 +498,7 @@ def main():
                             else target_caption
                         ),
                     )
-                    wandb.log({"sample_generations": generations_table})
+                    wandb.log({"sample_generations": sample_generations_table})
 
             #     wandb.log(
             #         {
