@@ -1,8 +1,8 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
-from datasets import Image, load_dataset
 from torch.utils.data import Dataset
 
 
@@ -31,7 +31,7 @@ class Flicker30K(Dataset):
         ]
 
         img_emb = torch.tensor(img_emb)
-        cap_emb = torch.tensor(cap_emb)
+        cap_emb = torch.tensor(np.array(cap_emb.tolist()))
         attention_mask = torch.tensor(attention_mask)
         cap_tokens = torch.tensor(cap_tokens)
 
