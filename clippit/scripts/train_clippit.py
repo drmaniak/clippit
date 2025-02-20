@@ -138,7 +138,11 @@ def train_epoch(
                 pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
                 true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
                 if wandb.run is not None:
-                    train_predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
+                    # Create a new table for each logging interval
+                    train_predictions_table = wandb.Table(
+                        columns=["Step", "Predicted", "True"]
+                    )
+                    train_predictions_table.add_data(batch_idx, pred_text, true_text)
                     wandb.log({"predictions_train": train_predictions_table})
 
             # Check for NaN/Inf
@@ -229,6 +233,10 @@ def validate(
             true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
 
             if wandb.run is not None:
+                # Create a new table for each logging interval
+                val_predictions_table = wandb.Table(
+                    columns=["Step", "Predicted", "True"]
+                )
                 val_predictions_table.add_data(batch_idx, pred_text, true_text)
                 wandb.log({"predictions_val": val_predictions_table})
 
@@ -297,17 +305,8 @@ def main():
         config=config,
     )
 
-    # Create tables for logging predictions
-    train_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
-    val_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
-    sample_generations_table: Table = wandb.Table(
-        columns=[
-            "Step",
-            "Inference Caption",
-            "Forward Pass Caption",
-            "Ground Truth Caption",
-        ]
-    )
+    # Tables will be created dynamically during training
+    pass
 
     # Create checkpoint directory
     Path(config["training"]["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
@@ -451,6 +450,15 @@ def main():
                     min_length=12,
                 )
                 if wandb.run is not None:
+                    # Create a new table for each epoch's samples
+                    sample_generations_table = wandb.Table(
+                        columns=[
+                            "Step",
+                            "Inference Caption",
+                            "Forward Pass Caption",
+                            "Ground Truth Caption",
+                        ]
+                    )
                     sample_generations_table.add_data(
                         epoch,
                         sample_caption,
@@ -466,19 +474,6 @@ def main():
                         ),
                     )
                     wandb.log({"sample_generations": sample_generations_table})
-
-            #     wandb.log(
-            #         {
-            #             "sample_generations": wandb.Table(
-            #                 data=[[sample_caption, forward_caption, target_caption]],
-            #                 columns=[
-            #                     "Inference Caption",
-            #                     "Forward Pass Caption",
-            #                     "Ground Truth Caption",
-            #                 ],
-            #             )
-            #         }
-            #     )
 
             model.train()
         # Print epoch summary
