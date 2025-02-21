@@ -21,7 +21,6 @@ from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
 from clippit.data.dataset import Flicker30K
-from clippit.model.decoder import Decoder
 
 
 def debug_tensor(name: str, tensor: torch.Tensor, batch_idx: int) -> None:
@@ -138,11 +137,7 @@ def train_epoch(
                 pred_text = clip_processor.tokenizer.decode(pred_tokens)  # type: ignore
                 true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
                 if wandb.run is not None:
-                    # Create a new table for each logging interval
-                    train_predictions_table = wandb.Table(
-                        columns=["Step", "Predicted", "True"]
-                    )
-                    train_predictions_table.add_data(batch_idx, pred_text, true_text)
+                    train_predictions_table.add_data(batch_idx, pred_text, true_text)  # type: ignore
                     wandb.log({"predictions_train": train_predictions_table})
 
             # Check for NaN/Inf
@@ -158,7 +153,7 @@ def train_epoch(
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
-            scheduler.step()
+            # scheduler.step()
 
         except RuntimeError as e:
             print(f"\nError in batch {batch_idx}: {str(e)}")
@@ -233,10 +228,6 @@ def validate(
             true_text = clip_processor.tokenizer.decode(true_tokens)  # type: ignore
 
             if wandb.run is not None:
-                # Create a new table for each logging interval
-                val_predictions_table = wandb.Table(
-                    columns=["Step", "Predicted", "True"]
-                )
                 val_predictions_table.add_data(batch_idx, pred_text, true_text)
                 wandb.log({"predictions_val": val_predictions_table})
 
@@ -305,8 +296,17 @@ def main():
         config=config,
     )
 
-    # Tables will be created dynamically during training
-    pass
+    # Create tables for logging predictions
+    train_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
+    val_predictions_table: Table = wandb.Table(columns=["Step", "Predicted", "True"])
+    sample_generations_table: Table = wandb.Table(
+        columns=[
+            "Step",
+            "Inference Caption",
+            "Forward Pass Caption",
+            "Ground Truth Caption",
+        ]
+    )
 
     # Create checkpoint directory
     Path(config["training"]["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
@@ -450,15 +450,6 @@ def main():
                     min_length=12,
                 )
                 if wandb.run is not None:
-                    # Create a new table for each epoch's samples
-                    sample_generations_table = wandb.Table(
-                        columns=[
-                            "Step",
-                            "Inference Caption",
-                            "Forward Pass Caption",
-                            "Ground Truth Caption",
-                        ]
-                    )
                     sample_generations_table.add_data(
                         epoch,
                         sample_caption,

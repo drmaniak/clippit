@@ -294,7 +294,7 @@ class Decoder(nn.Module):
                 generated_tokens.append(token_id)
 
                 # Get embedding for next token
-                token_inputs = torch.tensor([[token_id]], device=device)
+                token_inputs = torch.tensor([generated_tokens], device=device)
                 token_outputs = clip_model.text_model(
                     token_inputs, output_hidden_states=True, return_dict=True
                 )

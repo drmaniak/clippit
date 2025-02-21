@@ -113,7 +113,7 @@ class ClippitModel(nn.Module):
             return_tensors="pt",
             padding="max_length",
             truncation=True,
-            max_length=77,
+            max_length=self.seq_length,
         )
 
         # Move processed data to device
