@@ -66,14 +66,12 @@ class ClippitModel(nn.Module):
         self,
         img_embedding: torch.Tensor,
         caps: list[str],  # Now takes a list of captions
-        custom_attn_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Forward pass through the Decoder.
 
         Args:
             img_embedding (torch.Tensor): Image Embedding (batch_size, emb_dim=512).
             cap (str): String caption for the image
-            custom_attn_mask (torch.Tensor): Attention Mask for padded sequences (batch_size, seq_length)
 
         Process:
             1. Training Mode (teacher forcing):
@@ -95,7 +93,7 @@ class ClippitModel(nn.Module):
             decoder_input, attention_mask
         )  # (batch_size, seq_length, num_classes)
 
-        return logits, target_tokens
+        return logits, target_tokens, attention_mask
 
     def prepare_data(
         self,

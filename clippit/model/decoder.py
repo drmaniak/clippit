@@ -272,7 +272,7 @@ class Decoder(nn.Module):
                     next_token_logits[:, eos_token_id] = float("-inf")
 
                 # Add EOS penalty to encourage longer sequences
-                next_token_logits[:, eos_token_id] -= 2.0
+                next_token_logits[:, eos_token_id] -= 1.0
 
                 # Filter special tokens
                 next_token_logits[:, bos_token_id] = float("-inf")
@@ -299,9 +299,12 @@ class Decoder(nn.Module):
                     token_inputs, output_hidden_states=True, return_dict=True
                 )
                 token_embedding = token_outputs.last_hidden_state
+                last_token_embedding = token_embedding[:, -1, :].unsqueeze(1)
 
                 # Update sequence
-                current_sequence = torch.cat([current_sequence, token_embedding], dim=1)
+                current_sequence = torch.cat(
+                    [current_sequence, last_token_embedding], dim=1
+                )
 
                 # Debug output
                 if step % 5 == 0:

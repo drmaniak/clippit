@@ -118,7 +118,7 @@ def train_epoch(
 
         try:
             # Forward pass
-            outputs, target_output = model(
+            outputs, target_output, attention_mask = model(
                 image_emb, caption
             )  # shape: (batch_size, seq_len, vocab_size)
 
@@ -129,6 +129,10 @@ def train_epoch(
 
             # Calculate loss
             loss = criterion(outputs, labels)
+
+            loss_per_token = loss.view(attention_mask.shape)
+            masked_loss = loss_per_token * attention_mask.float()
+            final_loss = masked_loss.sum() / attention_mask.sum()
 
             # Debug info
             if batch_idx % 50 == 0:
@@ -147,13 +151,13 @@ def train_epoch(
                 debug_tensor("labels", labels, batch_idx)
                 raise ValueError("NaN/Inf in loss")
 
-            loss.backward()
+            final_loss.backward()
 
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
-            # scheduler.step()
+            scheduler.step()
 
         except RuntimeError as e:
             print(f"\nError in batch {batch_idx}: {str(e)}")
@@ -165,14 +169,14 @@ def train_epoch(
         mask = labels != criterion.ignore_index
         correct_predictions += ((predictions == labels) & mask).sum().item()
         total_predictions += mask.sum().item()
-        total_loss += loss.item()
+        total_loss += final_loss.item()
 
         # Update progress bar
         progress_bar.set_postfix(
             {
-                "loss": f"{loss.item():.4f}",
+                "loss": f"{final_loss.item():.4f}",
                 "acc": f"{100 * correct_predictions / max(1, total_predictions):.2f}%",
-                "perplexity": f"{torch.exp(torch.tensor(loss.item())):.2f}",
+                "perplexity": f"{torch.exp(torch.tensor(final_loss.item())):.2f}",
             }
         )
 
@@ -208,7 +212,7 @@ def validate(
         caption = batch_dict["caption"]
 
         # Forward pass with teacher forcing for validation
-        outputs, target_output = model(image_emb, caption)
+        outputs, target_output, attention_mask = model(image_emb, caption)
 
         # Reshape for loss calculation
         batch_size, seq_length, num_classes = outputs.shape
@@ -216,6 +220,10 @@ def validate(
         labels = target_output.reshape(-1).to(torch.long)
 
         loss = criterion(outputs, labels.view(-1))
+
+        loss_per_token = loss.view(attention_mask.shape)
+        masked_loss = loss_per_token * attention_mask.float()
+        final_loss = masked_loss.sum() / attention_mask.sum()
 
         if torch.isnan(loss).any() or torch.isinf(loss).any():
             print(f"\n=== NaN/Inf detected in loss at batch {batch_idx} ===")
@@ -237,12 +245,12 @@ def validate(
         correct_predictions += ((predictions == labels) & mask).sum().item()
         total_predictions += mask.sum().item()
 
-        total_loss += loss.item()
+        total_loss += final_loss.item()
 
         # Update progress bar
         progress_bar.set_postfix(
             {
-                "loss": f"{loss.item():.4f}",
+                "loss": f"{final_loss.item():.4f}",
                 "acc": f"{100 * correct_predictions / total_predictions:.2f}%",
             }
         )
@@ -351,7 +359,7 @@ def main():
     print(f"Number of decoder blocks: {config['model']['num_decoder_blocks']}")
 
     # Initialize criterion, optimizer and scheduler
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config["training"]["learning_rate"],
@@ -424,7 +432,9 @@ def main():
                 sample_caption = [sample_batch["caption"][0]]  # Take first caption
 
                 # Forward pass with teacher forcing for validation
-                outputs, target_output = model(sample_img_emb, sample_caption)
+                outputs, target_output, attention_mask = model(
+                    sample_img_emb, sample_caption
+                )
 
                 # Get model predictions
                 pred_tokens = outputs[0].argmax(dim=-1).cpu()  # Take first sequence
@@ -474,21 +484,76 @@ def main():
         # Save best model
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
+            checkpoint_path = Path(config["training"]["checkpoint_dir"])
+            best_model_path = (
+                checkpoint_path
+                / f"best_model_acc{val_accuracy:.2f}_epoch{epoch + 1}.pth"
+            )
+
             torch.save(
                 {
                     "epoch": epoch + 1,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
                     "train_loss": train_loss,
+                    "train_accuracy": train_accuracy,
                     "val_loss": val_loss,
                     "val_accuracy": val_accuracy,
+                    "train_perplexity": train_perplexity,
+                    "val_perplexity": val_perplexity,
                     "config": config,
+                    "best_val_accuracy": best_val_accuracy,
                 },
-                f"{config['training']['checkpoint_dir']}/best_model.pth",
+                best_model_path,
             )
             print(f"Saved new best model with validation accuracy: {val_accuracy:.2f}%")
 
-    wandb.finish()
+            # Create a symlink to the latest best model
+            latest_best_link = checkpoint_path / "best_model.pth"
+            if latest_best_link.exists():
+                latest_best_link.unlink()
+            latest_best_link.symlink_to(best_model_path.name)
+
+        # Save final model at the end of training
+        final_model_path = (
+            Path(config["training"]["checkpoint_dir"])
+            / f"final_model_epoch{config['training']['num_epochs']}.pth"
+        )
+        torch.save(
+            {
+                "epoch": config["training"]["num_epochs"],
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "train_loss": train_loss,
+                "train_accuracy": train_accuracy,
+                "val_loss": val_loss,
+                "val_accuracy": val_accuracy,
+                "train_perplexity": train_perplexity,
+                "val_perplexity": val_perplexity,
+                "config": config,
+                "best_val_accuracy": best_val_accuracy,
+            },
+            final_model_path,
+        )
+        print(f"\nSaved final model after {config['training']['num_epochs']} epochs")
+
+        # Log final metrics to wandb
+        if wandb.run is not None:
+            wandb.run.summary.update(
+                {
+                    "best_val_accuracy": best_val_accuracy,
+                    "final_train_loss": train_loss,
+                    "final_val_loss": val_loss,
+                    "final_train_accuracy": train_accuracy,
+                    "final_val_accuracy": val_accuracy,
+                    "final_train_perplexity": train_perplexity,
+                    "final_val_perplexity": val_perplexity,
+                }
+            )
+
+        wandb.finish()
 
 
 if __name__ == "__main__":
