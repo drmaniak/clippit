@@ -485,10 +485,7 @@ def main():
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             checkpoint_path = Path(config["training"]["checkpoint_dir"])
-            best_model_path = (
-                checkpoint_path
-                / f"best_model_acc{val_accuracy:.2f}_epoch{epoch + 1}.pth"
-            )
+            best_model_path = checkpoint_path / f"best_model_acc_epoch{epoch + 1}.pth"
 
             torch.save(
                 {
@@ -509,51 +506,31 @@ def main():
             )
             print(f"Saved new best model with validation accuracy: {val_accuracy:.2f}%")
 
-            # Create a symlink to the latest best model
-            latest_best_link = checkpoint_path / "best_model.pth"
-            if latest_best_link.exists():
-                latest_best_link.unlink()
-            latest_best_link.symlink_to(best_model_path.name)
+    # Save final model at the end of training
+    final_model_path = (
+        Path(config["training"]["checkpoint_dir"])
+        / f"final_model_epoch{config['training']['num_epochs']}.pth"
+    )
+    torch.save(
+        {
+            "epoch": config["training"]["num_epochs"],
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "train_loss": train_loss,
+            "train_accuracy": train_accuracy,
+            "val_loss": val_loss,
+            "val_accuracy": val_accuracy,
+            "train_perplexity": train_perplexity,
+            "val_perplexity": val_perplexity,
+            "config": config,
+            "best_val_accuracy": best_val_accuracy,
+        },
+        final_model_path,
+    )
+    print(f"\nSaved final model after {config['training']['num_epochs']} epochs")
 
-        # Save final model at the end of training
-        final_model_path = (
-            Path(config["training"]["checkpoint_dir"])
-            / f"final_model_epoch{config['training']['num_epochs']}.pth"
-        )
-        torch.save(
-            {
-                "epoch": config["training"]["num_epochs"],
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "train_loss": train_loss,
-                "train_accuracy": train_accuracy,
-                "val_loss": val_loss,
-                "val_accuracy": val_accuracy,
-                "train_perplexity": train_perplexity,
-                "val_perplexity": val_perplexity,
-                "config": config,
-                "best_val_accuracy": best_val_accuracy,
-            },
-            final_model_path,
-        )
-        print(f"\nSaved final model after {config['training']['num_epochs']} epochs")
-
-        # Log final metrics to wandb
-        if wandb.run is not None:
-            wandb.run.summary.update(
-                {
-                    "best_val_accuracy": best_val_accuracy,
-                    "final_train_loss": train_loss,
-                    "final_val_loss": val_loss,
-                    "final_train_accuracy": train_accuracy,
-                    "final_val_accuracy": val_accuracy,
-                    "final_train_perplexity": train_perplexity,
-                    "final_val_perplexity": val_perplexity,
-                }
-            )
-
-        wandb.finish()
+    wandb.finish()
 
 
 if __name__ == "__main__":
